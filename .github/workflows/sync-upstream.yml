@@ -1,0 +1,31 @@
+name: Sync fork with upstream
+on:
+  schedule:
+    - cron: '0 3/15 * * *'
+  workflow_dispatch:
+
+permissions: 
+  contents: write
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Install GitHub CLI
+        uses: cli/gh-action@v3
+
+      - name: Authenticate gh with token
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          echo "${GH_TOKEN}" | gh auth login --with-token
+
+      - name: Sync fork with upstream (main)
+        run: |
+          gh repo sync --branch main
+          
+        
