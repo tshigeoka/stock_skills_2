@@ -26,10 +26,9 @@ jobs:
           sudo apt install -y gh
           
       - name: Authenticate gh with token
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          echo "${GH_TOKEN}" | gh auth login --with-token
+          echo "${{ secrets.GITHUB_TOKEN }}" | gh auth login --with-token
+          gh auth status
 
       - name: Sync fork with upstream (main)
         run: |
