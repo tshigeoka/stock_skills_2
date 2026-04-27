@@ -100,6 +100,75 @@ def load_portfolio(csv_path: str = DEFAULT_CSV_PATH) -> list[dict]:
     return portfolio
 
 
+DEFAULT_CASH_PATH = os.path.join(
+    os.path.dirname(__file__),
+    "..",
+    "..",
+    "data",
+    "cash_balance.json",
+)
+
+
+def load_cash_balance(cash_path: str | None = None) -> dict:
+    """KIK-734: cash_balance.json を読み込む（PF総資産計算で必須）.
+
+    KIK-735: cash_path=None で `DEFAULT_CASH_PATH` を遅延参照する
+    （test の monkeypatch を効かせるため）。
+
+    Returns
+    -------
+    dict
+        {"total_jpy": float, "breakdown": {"USD": {...}, "JPY": {...}}, "date": str, ...}
+        ファイルが存在しない場合は空 dict を返す。
+    """
+    import json
+    if cash_path is None:
+        cash_path = DEFAULT_CASH_PATH
+    cash_path = os.path.normpath(cash_path)
+    if not os.path.exists(cash_path):
+        return {}
+    with open(cash_path, "r", encoding="utf-8") as f:
+        return json.load(f)
+
+
+def load_total_assets(
+    csv_path: str | None = None,
+    cash_path: str | None = None,
+) -> dict:
+    """KIK-734: PF総資産（株式 + 現金）を取得する SSoT 関数.
+
+    HC / Risk Assessor がキャッシュ参照漏れを起こさないよう、株式と現金を
+    一括取得する。Cash% 比率の正確な算出には必ずこの関数を使うこと。
+
+    Returns
+    -------
+    dict
+        {
+            "positions": list[dict],   # load_portfolio() の結果
+            "cash": dict,              # load_cash_balance() の結果
+            "cash_jpy": float,         # 現金合計（JPY 換算）
+            "has_cash": bool,          # cash_balance.json が読めたか
+        }
+    """
+    # KIK-735: dynamic default lookup so monkeypatching takes effect
+    if csv_path is None:
+        csv_path = DEFAULT_CSV_PATH
+    if cash_path is None:
+        cash_path = DEFAULT_CASH_PATH
+    positions = load_portfolio(csv_path)
+    cash = load_cash_balance(cash_path)
+    # KIK-734 review: has_cash は total_jpy が取れた時のみ True にする。
+    # cash_balance.json は存在するが total_jpy 欠損のケースを区別。
+    has_total_jpy = isinstance(cash, dict) and "total_jpy" in cash
+    cash_jpy = float(cash.get("total_jpy") or 0) if has_total_jpy else 0.0
+    return {
+        "positions": positions,
+        "cash": cash or {},
+        "cash_jpy": cash_jpy,
+        "has_cash": has_total_jpy,
+    }
+
+
 def save_portfolio(
     portfolio: list[dict], csv_path: str = DEFAULT_CSV_PATH
 ) -> None:
