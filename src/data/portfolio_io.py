@@ -5,9 +5,12 @@ persistence with position tracking and P&L calculation.
 """
 
 import csv
+import logging
 import os
 from datetime import datetime
 from typing import Optional
+
+logger = logging.getLogger(__name__)
 
 from src.data.ticker_utils import (
     SUFFIX_TO_CURRENCY as _SUFFIX_TO_CURRENCY,
@@ -80,10 +83,20 @@ def load_portfolio(csv_path: str = DEFAULT_CSV_PATH) -> list[dict]:
     with open(csv_path, "r", encoding="utf-8", newline="") as f:
         reader = csv.DictReader(f)
         for row in reader:
+            # KIK-744: 行単位で try/except し、数値破損で全体が落ちないようにする
+            try:
+                shares_int = int(float(row.get("shares", 0)))
+                cost_price_f = float(row.get("cost_price", 0.0))
+            except (TypeError, ValueError) as e:
+                logger.warning(
+                    "Skipping malformed portfolio row symbol=%r: %s",
+                    row.get("symbol", ""), e,
+                )
+                continue
             position = {
                 "symbol": row.get("symbol", "").strip(),
-                "shares": int(float(row.get("shares", 0))),
-                "cost_price": float(row.get("cost_price", 0.0)),
+                "shares": shares_int,
+                "cost_price": cost_price_f,
                 "cost_currency": row.get("cost_currency", "JPY").strip(),
                 "purchase_date": row.get("purchase_date", "").strip(),
                 "memo": row.get("memo", "").strip(),
@@ -226,7 +239,18 @@ def add_position(
     -------
     dict
         更新後のポジション dict
+
+    Raises
+    ------
+    ValueError
+        shares <= 0 または cost_price <= 0 の場合（KIK-742）。
     """
+    # KIK-742: 入力バリデーション（負数・ゼロを拒否してPF破壊を防ぐ）
+    if not isinstance(shares, (int, float)) or shares <= 0:
+        raise ValueError(f"shares must be > 0, got {shares!r}")
+    if not isinstance(cost_price, (int, float)) or cost_price <= 0:
+        raise ValueError(f"cost_price must be > 0, got {cost_price!r}")
+
     if purchase_date is None:
         purchase_date = datetime.now().strftime("%Y-%m-%d")
 
@@ -240,6 +264,14 @@ def add_position(
             break
 
     if existing is not None:
+        # KIK-744: 異通貨混在を拒否（平均取得単価が壊れるため）
+        existing_currency = (existing.get("cost_currency") or "JPY").strip().upper()
+        new_currency = (cost_currency or "JPY").strip().upper()
+        if existing_currency != new_currency:
+            raise ValueError(
+                f"cost_currency mismatch for {symbol}: existing={existing_currency!r}, "
+                f"new={new_currency!r}. Cannot mix currencies in average cost basis."
+            )
         # 既存ポジションへの追加購入 → 平均取得単価を再計算
         old_shares = existing["shares"]
         old_price = existing["cost_price"]
@@ -303,8 +335,17 @@ def sell_position(
     Raises
     ------
     ValueError
-        銘柄が見つからない場合、または保有数を超える売却の場合
+        銘柄が見つからない場合、保有数を超える売却の場合、
+        または shares/sell_price が <= 0 の場合（KIK-742）。
     """
+    # KIK-742: 入力バリデーション（負数・ゼロを拒否してPF破壊を防ぐ）
+    if not isinstance(shares, (int, float)) or shares <= 0:
+        raise ValueError(f"shares must be > 0, got {shares!r}")
+    if sell_price is not None and (
+        not isinstance(sell_price, (int, float)) or sell_price <= 0
+    ):
+        raise ValueError(f"sell_price must be > 0 if provided, got {sell_price!r}")
+
     portfolio = load_portfolio(csv_path)
 
     target_idx = None
